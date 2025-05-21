@@ -1,4 +1,6 @@
 // src/app/offline/page.tsx
+'use client';
+
 import Link from 'next/link';
 import { FiWifiOff, FiRefreshCw } from 'react-icons/fi';
 

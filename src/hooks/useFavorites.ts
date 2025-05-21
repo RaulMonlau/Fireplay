@@ -4,77 +4,125 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { db } from '@/firebase/firebase';
-import { doc, collection, setDoc, deleteDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
-import { FavoriteItem, Game } from '@/types/types';
+import { 
+  collection, 
+  doc, 
+  getDocs, 
+  setDoc, 
+  deleteDoc, 
+  onSnapshot,
+  orderBy,
+  query
+} from 'firebase/firestore';
+import { Game } from '@/types/types';
+
+export interface FavoriteItem {
+  id: number;
+  slug: string;
+  name: string;
+  image: string;
+  added_at: Date;
+}
 
 export function useFavorites() {
   const [favorites, setFavorites] = useState<FavoriteItem[]>([]);
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
 
-  // Cargar favoritos al iniciar
+  // Suscribirse a cambios en favoritos en tiempo real
   useEffect(() => {
-    const loadFavorites = async () => {
-      if (!user) {
-        setFavorites([]);
-        setLoading(false);
-        return;
-      }
+    if (!user) {
+      setFavorites([]);
+      setLoading(false);
+      return () => {};
+    }
 
-      setLoading(true);
-      try {
-        const favoritesRef = collection(db, 'users', user.uid, 'favorites');
-        const snapshot = await getDocs(favoritesRef);
+    console.log('Setting up favorites listener for user:', user.uid);
+    setLoading(true);
+    
+    // Ruta correcta a la subcolección de favoritos
+    const favoritesRef = collection(db, 'users', user.uid, 'favorites');
+    const q = query(favoritesRef, orderBy('added_at', 'desc'));
+    
+    // Crear suscripción en tiempo real
+    const unsubscribe = onSnapshot(q, 
+      (snapshot) => {
+        console.log('Favorites snapshot received:', snapshot.size, 'documents');
+        const favoritesData = snapshot.docs.map(doc => {
+          const data = doc.data();
+          return {
+            id: Number(doc.id),
+            slug: data.slug,
+            name: data.name,
+            image: data.image,
+            added_at: data.added_at?.toDate() || new Date()
+          };
+        });
         
-        const favoritesData = snapshot.docs.map(doc => ({
-          id: Number(doc.id),
-          ...doc.data()
-        })) as FavoriteItem[];
-        
+        console.log('Parsed favorites:', favoritesData);
         setFavorites(favoritesData);
-      } catch (error) {
-        console.error('Error loading favorites:', error);
-      } finally {
+        setLoading(false);
+      }, 
+      (error) => {
+        console.error('Error getting favorites:', error);
         setLoading(false);
       }
+    );
+    
+    return () => {
+      console.log('Cleaning up favorites listener');
+      unsubscribe();
     };
-
-    loadFavorites();
   }, [user]);
 
   // Añadir a favoritos
   const addToFavorites = async (game: Game) => {
-    if (!user) return;
+    if (!user) {
+      throw new Error('User must be logged in to add favorites');
+    }
+    
+    console.log('Adding game to favorites:', game.name);
+    
+    const favoriteItem = {
+      id: game.id,
+      slug: game.slug,
+      name: game.name,
+      image: game.background_image || '',
+      added_at: new Date()
+    };
     
     try {
-      const favoriteItem: FavoriteItem = {
-        id: game.id,
-        slug: game.slug,
-        name: game.name,
-        image: game.background_image || '',
-        added_at: new Date()
-      };
+      // Asegurarse de que la colección 'users/{uid}/favorites' existe
+      const userDocRef = doc(db, 'users', user.uid);
+      const favDocRef = doc(userDocRef, 'favorites', game.id.toString());
       
-      const docRef = doc(db, 'users', user.uid, 'favorites', game.id.toString());
-      await setDoc(docRef, favoriteItem);
+      await setDoc(favDocRef, favoriteItem);
+      console.log('Game added to favorites successfully');
       
-      setFavorites(prev => [...prev, favoriteItem]);
+      return true;
     } catch (error) {
       console.error('Error adding to favorites:', error);
+      throw error;
     }
   };
 
   // Eliminar de favoritos
   const removeFromFavorites = async (gameId: number) => {
-    if (!user) return;
+    if (!user) {
+      throw new Error('User must be logged in to remove favorites');
+    }
+    
+    console.log('Removing game from favorites:', gameId);
     
     try {
-      const docRef = doc(db, 'users', user.uid, 'favorites', gameId.toString());
-      await deleteDoc(docRef);
+      const favDocRef = doc(db, 'users', user.uid, 'favorites', gameId.toString());
+      await deleteDoc(favDocRef);
+      console.log('Game removed from favorites successfully');
       
-      setFavorites(prev => prev.filter(fav => fav.id !== gameId));
+      return true;
     } catch (error) {
       console.error('Error removing from favorites:', error);
+      throw error;
     }
   };
 
@@ -87,8 +135,10 @@ export function useFavorites() {
   const toggleFavorite = async (game: Game) => {
     if (isFavorite(game.id)) {
       await removeFromFavorites(game.id);
+      return false; // Ya no es favorito
     } else {
       await addToFavorites(game);
+      return true; // Ahora es favorito
     }
   };
 

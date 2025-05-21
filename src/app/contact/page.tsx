@@ -5,9 +5,10 @@ import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { FiMail, FiUser, FiMessageSquare, FiCheck, FiAlertCircle } from 'react-icons/fi';
 import { Button } from '@/components/ui/Button';
-import { collection, addDoc } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/firebase/firebase';
 import { useAuth } from '@/contexts/AuthContext';
+import { toast } from 'react-hot-toast';
 
 type ContactFormValues = {
   name: string;
@@ -26,6 +27,8 @@ export default function ContactPage() {
     defaultValues: {
       name: user?.displayName || '',
       email: user?.email || '',
+      subject: '',
+      message: ''
     }
   });
   
@@ -34,22 +37,31 @@ export default function ContactPage() {
     setError(null);
     
     try {
-      await addDoc(collection(db, 'messages'), {
+      console.log('Submitting message to Firebase:', data);
+      
+      // Usar serverTimestamp para consistencia con otros clientes
+      const messageData = {
         ...data,
         userId: user?.uid || null,
-        createdAt: new Date()
-      });
+        createdAt: serverTimestamp(),
+        status: 'new'
+      };
       
+      const docRef = await addDoc(collection(db, 'messages'), messageData);
+      
+      console.log('Message submitted successfully with ID:', docRef.id);
       setSubmitSuccess(true);
-      reset();
+      toast.success('¡Mensaje enviado correctamente!');
+      reset({ subject: '', message: '' });
       
       // Resetear el éxito después de 5 segundos
       setTimeout(() => {
         setSubmitSuccess(false);
       }, 5000);
     } catch (err) {
-      setError('Ha ocurrido un error al enviar el mensaje. Por favor, inténtalo de nuevo.');
       console.error('Error submitting contact form:', err);
+      setError('Ha ocurrido un error al enviar el mensaje. Por favor, inténtalo de nuevo.');
+      toast.error('Error al enviar el mensaje');
     } finally {
       setIsSubmitting(false);
     }
